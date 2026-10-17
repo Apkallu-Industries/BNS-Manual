@@ -14,8 +14,8 @@ import argparse, collections, html, json, re, shutil
 from pathlib import Path
 
 PLACEHOLDER = "https://manual.blacknet.example"
-URL_RE = re.compile(re.escape(PLACEHOLDER) + r"(/[A-Za-z0-9_\-/]+)")
-AIRFRAMES = {"b2": "B-2 Spirit (BNS)", "b3": "B-3 / B3-A Spirit (BNS)"}
+URL_RE = re.compile("(?:" + re.escape(PLACEHOLDER) + "|" + re.escape("https://apkallu-industries.github.io/BNS-Manual") + r")(/[A-Za-z0-9_/-]+)")
+AIRFRAMES = {"": "BNS library parts", "b3": "B-3 / B3-A Spirit (BNS)"}
 CSS = """:root{--bg:#f4f4f1;--fg:#16181a;--mut:#5d6266;--card:#fff;--line:#d9dbd6;--acc:#4a5a2a}
 @media (prefers-color-scheme:dark){:root{--bg:#121413;--fg:#e8e9e6;--mut:#9aa09b;--card:#1b1e1c;--line:#2c312d;--acc:#a8bb6e}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
@@ -71,16 +71,19 @@ def main():
     index = collections.defaultdict(list)
     for path in sorted(paths):
         parts = path.strip("/").split("/")
-        if len(parts) != 3 or parts[1] not in ("parts", "panels"):
+        if len(parts) == 2:                      # shared library items: /parts/<P/N>
+            parts = [""] + parts
+        if len(parts) != 3 or parts[1] not in ("parts", "panels") or parts[0] == "b2":   # B-2 retired 2026-10-17
             continue
         af, kind, key = parts
         e = reg.get(key) if kind == "parts" else None
         if kind == "parts":
-            title = e["name"] if e else key
+            # B-2 retired (owner 2026-10-17, third-party content): never published; fall back to the nomenclature
+            title = (e["nomenclature"] if "B-2" in e["name"] else e["name"]) if e else key
             body = f"<h1>{html.escape(title)}</h1><p class=pn>{html.escape(key)}</p>"
             if e:
                 dash = "".join(f"<li><code>{html.escape(k)}</code> {html.escape(v)}</li>" for k, v in e.get("dash_numbers", {}).items())
-                used = "".join(f"<li>{html.escape(usage(u))}</li>" for u in e.get("used_on", []))
+                used = "".join(f"<li>{html.escape(usage(u))}</li>" for u in e.get("used_on", []) if "B-2" not in usage(u))
                 prog = e.get("programme")
                 body += "<div class=card>" + rows([
                     ("Nomenclature", html.escape(e.get("nomenclature", ""))), ("Category", html.escape(e.get("category", ""))),
@@ -93,18 +96,19 @@ def main():
             title = f"Panel {key}"
             body = f"<h1>Panel {html.escape(key)}</h1><div class=card><p>Crew-manual page for panel <code>{html.escape(key)}</code> on the {html.escape(AIRFRAMES.get(af, af))}. Panel content is not published yet.</p></div>"
         body += f"<p><a href='../'>All {html.escape(AIRFRAMES.get(af, af))} {kind}</a></p>"
-        d = out / af / kind / key
+        d = out / af / kind / key if af else out / kind / key
         d.mkdir(parents=True)
-        (d / "index.html").write_text(page(title, body, 3), encoding="utf-8")
+        (d / "index.html").write_text(page(title, body, 3 if af else 2), encoding="utf-8")
         index[(af, kind)].append((key, title))
     for (af, kind), items in index.items():
+        base = out / af if af else out
         li = "".join(f"<li><a href='{html.escape(k)}/'><code>{html.escape(k)}</code></a> {html.escape(t) if t != k else ''}</li>" for k, t in items)
-        (out / af / kind / "index.html").write_text(page(f"{AIRFRAMES.get(af, af)} {kind}", f"<h1>{html.escape(AIRFRAMES.get(af, af))}: {kind}</h1><ul>{li}</ul>", 2), encoding="utf-8")
-        for p in ((out / af / "index.html"),):
+        (base / kind / "index.html").write_text(page(f"{AIRFRAMES.get(af, af)} {kind}", f"<h1>{html.escape(AIRFRAMES.get(af, af))}: {kind}</h1><ul>{li}</ul>", 2 if af else 1), encoding="utf-8")
+        for p in (() if not af else (out / af / "index.html",)):
             secs = "".join(f"<li><a href='{k}/'>{k}</a></li>" for (x, k) in index if x == af)
             p.write_text(page(AIRFRAMES.get(af, af), f"<h1>{html.escape(AIRFRAMES.get(af, af))}</h1><ul>{secs}</ul>", 1), encoding="utf-8")
     total = sum(len(v) for v in index.values())
-    secs = "".join(f"<li><a href='{af}/{kind}/'>{html.escape(AIRFRAMES.get(af, af))}: {kind}</a> ({len(v)})</li>" for (af, kind), v in sorted(index.items()))
+    secs = "".join(f"<li><a href='{af + '/' if af else ''}{kind}/'>{html.escape(AIRFRAMES.get(af, af))}: {kind}</a> ({len(v)})</li>" for (af, kind), v in sorted(index.items()))
     (out / "index.html").write_text(page("BlackNet Systems parts and panels",
         f"<h1>BlackNet Systems parts and panels</h1><p>The pages behind the QR marks on BNS parts. Scan a part's QR, or browse:</p><ul>{secs}</ul>", 0), encoding="utf-8")
     (out / "404.html").write_text(page("Not found", "<h1>Not found</h1><p>No BNS page at this address.</p>", 0).replace("href=''", "href='/BNS-Manual/'").replace("href='style.css'", "href='/BNS-Manual/style.css'"), encoding="utf-8")
